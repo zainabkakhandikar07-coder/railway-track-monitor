@@ -1,0 +1,5 @@
+{
+  "name": "Railway Track Monitor",
+  "description": "Direct hardware monitoring and control dashboard for a Raspberry Pi-powered railway inspection bot.",
+  "requestFramePermissions": []
+}
