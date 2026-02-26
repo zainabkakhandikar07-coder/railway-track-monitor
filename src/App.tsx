@@ -28,7 +28,7 @@ interface LogEntry {
 }
 
 export default function App() {
-  const [piIp, setPiIp] = useState<string>('192.168.1.100'); // Default placeholder
+  const [piIp, setPiIp] = useState<string>('10.75.72.15'); // Default placeholder
   const [isEditingIp, setIsEditingIp] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [crackStatus, setCrackStatus] = useState<string>('Initializing...');
@@ -507,23 +507,72 @@ export default function App() {
 
                 <div className="space-y-3">
                   <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-widest">2. Update Python Code</h3>
-                  <p className="text-xs text-zinc-400">Add <strong>CORS</strong> support and a <strong>JSON status</strong> endpoint to your script:</p>
+                  <p className="text-xs text-zinc-400">Use this robust script optimized for <strong>USB Cameras</strong> and the dashboard:</p>
                   <pre className="bg-black p-4 rounded-xl text-[10px] font-mono text-zinc-300 border border-white/5 overflow-x-auto">
-{`from flask import Flask, render_template, Response, jsonify
-from flask_cors import CORS # <--- ADD THIS
+{`from flask import Flask, Response, jsonify
+from flask_cors import CORS
 import cv2
 import numpy as np
+import time
 
 app = Flask(__name__)
-CORS(app) # <--- ADD THIS
+CORS(app)
 
-# ... (your existing camera and detection code)
+# --- CAMERA SETUP ---
+# USB cameras often use index 0, 1, or 2. We'll try to find it.
+camera = None
+for index in [0, 1, 2]:
+    cap = cv2.VideoCapture(index)
+    if cap.isOpened():
+        camera = cap
+        print(f"Successfully connected to USB Camera at index {index}")
+        break
+    cap.release()
 
-@app.route('/')
-def index():
-    return render_template("index.html", status=crack_status)
+if not camera:
+    print("ERROR: No USB camera found. Check connections.")
+    # exit() # Uncomment to stop script if no camera
 
-# ADD THIS ENDPOINT FOR THE DASHBOARD
+# Optimize for Raspberry Pi performance
+if camera:
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+crack_status = "No Crack Detected"
+
+def detect_crack(frame):
+    global crack_status
+    try:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blur, 50, 150)
+        crack_pixels = np.sum(edges == 255)
+
+        if crack_pixels > 4000:
+            crack_status = "CRACK DETECTED!"
+            cv2.putText(frame, "CRACK DETECTED!", (40, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+        else:
+            crack_status = "No Crack Detected"
+    except Exception as e:
+        print(f"Detection Error: {e}")
+    return frame
+
+def generate_frames():
+    while True:
+        if not camera:
+            time.sleep(1)
+            continue
+        success, frame = camera.read()
+        if not success:
+            print("Failed to read frame")
+            break
+        
+        frame = detect_crack(frame)
+        ret, buffer = cv2.imencode('.jpg', frame)
+        yield (b'--frame\\r\\n'
+               b'Content-Type: image/jpeg\\r\\n\\r\\n' + buffer.tobytes() + b'\\r\\n')
+
 @app.route('/status')
 def status():
     return jsonify({"crack_status": crack_status})
@@ -534,8 +583,20 @@ def video():
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)`}
+    print("Starting server at http://0.0.0.0:5000")
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)`}
                   </pre>
+                </div>
+
+                <div className="space-y-3">
+                  <h3 className="text-sm font-bold text-amber-400 uppercase tracking-widest">3. Troubleshooting Checklist</h3>
+                  <ul className="text-[11px] text-zinc-400 space-y-2 list-disc pl-4">
+                    <li><strong>Camera Index:</strong> USB cameras on Pi can sometimes be at <code className="text-zinc-200">/dev/video1</code> or <code className="text-zinc-200">/dev/video2</code>. The script above tries to find it automatically.</li>
+                    <li><strong>Permissions:</strong> Try running the script with <code className="text-zinc-200">sudo python3 script.py</code> if you get permission errors.</li>
+                    <li><strong>Mixed Content:</strong> If the video doesn't show, you <strong>MUST</strong> enable "Insecure Content" in your browser settings (click the Lock icon next to the URL).</li>
+                    <li><strong>Network:</strong> Ensure your Pi IP (<code className="text-zinc-200">10.75.72.15</code>) is correct and your computer is on the same network.</li>
+                    <li><strong>Dependencies:</strong> Ensure you ran <code className="text-zinc-200">pip install flask-cors</code>. Without it, the dashboard cannot talk to the Pi.</li>
+                  </ul>
                 </div>
 
                 <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl">
