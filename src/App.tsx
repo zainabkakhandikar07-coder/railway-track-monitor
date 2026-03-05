@@ -16,95 +16,216 @@ import {
   Navigation,
   Clock,
   Zap,
-  CheckCircle2
+  CheckCircle2,
+  Plus,
+  Database,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+
+// Declare Leaflet for TypeScript
+declare global {
+  interface Window {
+    L: any;
+  }
+}
 
 interface LogEntry {
   id: string;
   timestamp: string;
+  lat: number;
+  lng: number;
+  dist: number;
+  severity: 'Low' | 'Medium' | 'High';
   status: string;
   type: 'info' | 'warning' | 'error' | 'success';
 }
 
+const TRACK_PATH = [
+  [17.664, 75.893], // Solapur Jn
+  [17.600, 75.645], // Mohol
+  [18.026, 75.163], // Madha
+  [18.085, 75.025], // Kurduvadi Jn
+  [18.176, 74.925], // Kem
+  [18.255, 74.855], // Jeur
+  [18.285, 74.755], // Bhigwan
+  [18.465, 74.585], // Daund Jn
+  [18.455, 74.355], // Kedgaon
+  [18.485, 74.125], // Uruli
+  [18.495, 73.985], // Loni
+  [18.529, 73.874]  // Pune Jn
+];
+
+const INITIAL_CRACKS: LogEntry[] = [
+  {
+    id: '1',
+    timestamp: '2024-03-01 10:20',
+    lat: 17.632,
+    lng: 75.769,
+    dist: 30,
+    severity: 'Medium',
+    status: 'Crack at 17.632, 75.769',
+    type: 'warning'
+  },
+  {
+    id: '2',
+    timestamp: '2024-03-02 14:45',
+    lat: 18.170,
+    lng: 74.940,
+    dist: 110,
+    severity: 'High',
+    status: 'Crack at 18.170, 74.940',
+    type: 'error'
+  },
+  {
+    id: '3',
+    timestamp: '2024-03-03 09:15',
+    lat: 18.475,
+    lng: 74.450,
+    dist: 210,
+    severity: 'Low',
+    status: 'Crack at 18.475, 74.450',
+    type: 'info'
+  }
+];
+
+function getPointOnPath(progress: number) {
+  const totalSegments = TRACK_PATH.length - 1;
+  const segmentIndex = Math.min(Math.floor(progress * totalSegments), totalSegments - 1);
+  const segmentProgress = (progress * totalSegments) % 1;
+  
+  const start = TRACK_PATH[segmentIndex];
+  const end = TRACK_PATH[segmentIndex + 1];
+  
+  const lat = start[0] + (end[0] - start[0]) * segmentProgress;
+  const lng = start[1] + (end[1] - start[1]) * segmentProgress;
+  
+  return { lat, lng };
+}
+
 export default function App() {
-  const [piIp, setPiIp] = useState<string>('10.75.72.15'); // Default placeholder
+  const [piIp, setPiIp] = useState<string>('10.75.72.15');
   const [isEditingIp, setIsEditingIp] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
-  const [crackStatus, setCrackStatus] = useState<string>('Initializing...');
+  const [isMockMode, setIsMockMode] = useState(true); // Default to mock for demo
+  const [showSetup, setShowSetup] = useState(false);
+  const [crackStatus, setCrackStatus] = useState<string>('System Ready');
   const [crackDetected, setCrackDetected] = useState(false);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>(INITIAL_CRACKS);
   const [stats, setStats] = useState({
     distance: 0,
     scanTime: 0,
-    crackCount: 0,
-    battery: 85,
+    crackCount: 3,
+    battery: 92,
     speed: 0
   });
-  const [gps, setGps] = useState({
-    lat: '28.6139° N',
-    lng: '77.2090° E'
-  });
 
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const mapRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
 
-  // Poll for crack status
-  const [isMockMode, setIsMockMode] = useState(false);
-  const [showSetup, setShowSetup] = useState(false);
+  // Initialize Leaflet Map
+  useEffect(() => {
+    if (!window.L) return;
 
+    if (!mapRef.current) {
+      mapRef.current = window.L.map('map-container').setView([18.1, 74.8], 8);
+
+      window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(mapRef.current);
+
+      // Add Railway Track Polyline
+      window.L.polyline(TRACK_PATH, {
+        color: '#10b981',
+        weight: 4,
+        opacity: 0.8,
+        dashArray: '10, 10'
+      }).addTo(mapRef.current);
+
+      // Add Start/End Markers
+      window.L.marker([17.664, 75.893]).addTo(mapRef.current).bindPopup('<b>Solapur Jn</b><br>Start Point');
+      window.L.marker([17.600, 75.645]).addTo(mapRef.current).bindPopup('<b>Mohol</b>');
+      window.L.marker([18.026, 75.163]).addTo(mapRef.current).bindPopup('<b>Madha</b>');
+      window.L.marker([18.085, 75.025]).addTo(mapRef.current).bindPopup('<b>Kurduvadi Jn</b>');
+      window.L.marker([18.176, 74.925]).addTo(mapRef.current).bindPopup('<b>Kem</b>');
+      window.L.marker([18.255, 74.855]).addTo(mapRef.current).bindPopup('<b>Jeur</b>');
+      window.L.marker([18.285, 74.755]).addTo(mapRef.current).bindPopup('<b>Bhigwan</b>');
+      window.L.marker([18.465, 74.585]).addTo(mapRef.current).bindPopup('<b>Daund Jn</b>');
+      window.L.marker([18.455, 74.355]).addTo(mapRef.current).bindPopup('<b>Kedgaon</b>');
+      window.L.marker([18.485, 74.125]).addTo(mapRef.current).bindPopup('<b>Uruli</b>');
+      window.L.marker([18.495, 73.985]).addTo(mapRef.current).bindPopup('<b>Loni</b>');
+      window.L.marker([18.529, 73.874]).addTo(mapRef.current).bindPopup('<b>Pune Jn</b><br>End Point');
+    }
+
+    // Update Crack Markers
+    markersRef.current.forEach(m => m.remove());
+    markersRef.current = [];
+
+    logs.forEach(log => {
+      if (log.lat && log.lng) {
+        const marker = window.L.marker([log.lat, log.lng], {
+          icon: window.L.divIcon({
+            className: 'custom-div-icon',
+            html: `<div class="w-4 h-4 rounded-full bg-red-500 border-2 border-white shadow-lg animate-pulse"></div>`,
+            iconSize: [16, 16],
+            iconAnchor: [8, 8]
+          })
+        }).addTo(mapRef.current);
+
+        marker.bindPopup(`
+          <div class="p-2 text-xs">
+            <b class="text-red-600 uppercase">Crack Detected</b><br>
+            <b>Location:</b> ${log.lat}, ${log.lng}<br>
+            <b>Distance:</b> ${log.dist} km from Solapur<br>
+            <b>Severity:</b> <span class="${log.severity === 'High' ? 'text-red-500' : log.severity === 'Medium' ? 'text-amber-500' : 'text-blue-500'} font-bold">${log.severity}</span><br>
+            <b>Detected:</b> ${log.timestamp}
+          </div>
+        `);
+        markersRef.current.push(marker);
+      }
+    });
+
+    return () => {
+      // Cleanup if needed
+    };
+  }, [logs]);
+
+  // Status Polling Logic
   useEffect(() => {
     const pollStatus = async () => {
       if (isMockMode) {
-        const isCrack = Math.random() > 0.9;
-        setCrackStatus(isCrack ? 'CRACK DETECTED!' : 'All Clear');
-        if (isCrack && !crackDetected) {
-          addLog('Mock: Crack detected!', 'error');
-          setStats(prev => ({ ...prev, crackCount: prev.crackCount + 1 }));
+        // Mock logic: randomly detect crack every 30s if scanning
+        if (isScanning && Math.random() > 0.98) {
+          handleNewDetection();
         }
-        setCrackDetected(isCrack);
         return;
       }
 
       try {
-        // Try /status JSON endpoint first (recommended), fallback to / HTML
-        let isCrack = false;
-        try {
-          const statusRes = await fetch(`http://${piIp}:5000/status`, { mode: 'cors' });
-          if (statusRes.ok) {
-            const data = await statusRes.json();
-            isCrack = data.crack_status?.toLowerCase().includes('crack detected');
-          } else {
-            throw new Error('No status endpoint');
+        const res = await fetch(`http://${piIp}:5000/status`, { mode: 'cors' });
+        if (res.ok) {
+          const data = await res.json();
+          const isCrack = data.crack_status?.toLowerCase().includes('crack detected');
+          setCrackStatus(isCrack ? 'CRACK DETECTED!' : 'All Clear');
+          if (isCrack && !crackDetected) {
+            handleNewDetection();
           }
-        } catch {
-          const rootRes = await fetch(`http://${piIp}:5000/`, { mode: 'cors' });
-          const text = await rootRes.text();
-          isCrack = text.toLowerCase().includes('crack detected');
+          setCrackDetected(isCrack);
         }
-
-        setCrackStatus(isCrack ? 'CRACK DETECTED!' : 'All Clear');
-        
-        if (isCrack && !crackDetected) {
-          addLog('Crack detected at current coordinates!', 'error');
-          setStats(prev => ({ ...prev, crackCount: prev.crackCount + 1 }));
-        }
-        setCrackDetected(isCrack);
       } catch (error) {
-        console.error('Failed to fetch status:', error);
         setCrackStatus('Connection Error');
       }
     };
 
     const interval = setInterval(() => {
-      if (isScanning) {
-        pollStatus();
-      }
+      if (isScanning) pollStatus();
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [piIp, isScanning, crackDetected]);
+  }, [piIp, isScanning, isMockMode, crackDetected]);
 
-  // Simulation for stats
+  // Stats Simulation
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isScanning) {
@@ -120,34 +241,41 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isScanning]);
 
-  const addLog = (status: string, type: LogEntry['type'] = 'info') => {
+  const handleNewDetection = async () => {
+    const progress = Math.random();
+    const { lat, lng } = getPointOnPath(progress);
+    const newDist = Math.floor(progress * 264);
+    const severities: ('Low' | 'Medium' | 'High')[] = ['Low', 'Medium', 'High'];
+    const severity = severities[Math.floor(Math.random() * 3)];
+
     const newLog: LogEntry = {
       id: Math.random().toString(36).substr(2, 9),
-      timestamp: new Date().toLocaleTimeString(),
-      status,
-      type
+      timestamp: new Date().toISOString().slice(0, 16).replace('T', ' '),
+      lat: +lat.toFixed(4),
+      lng: +lng.toFixed(4),
+      dist: newDist,
+      severity,
+      status: `Crack at ${lat.toFixed(2)}, ${lng.toFixed(2)}`,
+      type: severity === 'High' ? 'error' : severity === 'Medium' ? 'warning' : 'info'
     };
-    setLogs(prev => [newLog, ...prev].slice(0, 50));
+
+    setLogs(prev => [newLog, ...prev]);
+    setStats(prev => ({ ...prev, crackCount: prev.crackCount + 1 }));
+    setCrackDetected(true);
+    
+    // Simulate POST to /api/detect
+    console.log('Simulating POST to /api/detect', newLog);
   };
 
   const toggleScan = () => {
-    const nextState = !isScanning;
-    setIsScanning(nextState);
-    addLog(nextState ? 'Scan started' : 'Scan stopped', nextState ? 'success' : 'warning');
-    if (!nextState) setStats(prev => ({ ...prev, speed: 0 }));
-  };
-
-  const formatTime = (seconds: number) => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    setIsScanning(!isScanning);
+    if (isScanning) setStats(prev => ({ ...prev, speed: 0 }));
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-emerald-500/30">
+    <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-emerald-500/30 flex flex-col">
       {/* Header */}
-      <header className="border-b border-white/5 bg-black/40 backdrop-blur-md sticky top-0 z-50">
+      <header className="border-b border-white/5 bg-black/40 backdrop-blur-md sticky top-0 z-[1000]">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center border border-emerald-500/20">
@@ -155,7 +283,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="font-bold text-lg tracking-tight">TrackGuard Monitor</h1>
-              <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Railway Inspection System</p>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Solapur-Pune Railway Division</p>
             </div>
           </div>
 
@@ -168,311 +296,168 @@ export default function App() {
             </button>
             <button 
               onClick={() => setIsMockMode(!isMockMode)}
-              className={`text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-full border transition-colors ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[10px] font-bold uppercase tracking-wider transition-all ${
                 isMockMode 
                   ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' 
-                  : 'bg-zinc-900 border-white/5 text-zinc-500 hover:text-zinc-300'
+                  : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
               }`}
             >
-              {isMockMode ? 'Mock Mode ON' : 'Use Real Pi'}
+              {isMockMode ? <Database className="w-3 h-3" /> : <Wifi className="w-3 h-3" />}
+              {isMockMode ? 'Sample Data' : 'Live Pi'}
             </button>
+            
             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-zinc-900 rounded-full border border-white/5">
               <Settings className="w-4 h-4 text-zinc-400" />
-              {isEditingIp ? (
-                <input 
-                  type="text" 
-                  value={piIp} 
-                  onChange={(e) => setPiIp(e.target.value)}
-                  onBlur={() => setIsEditingIp(false)}
-                  onKeyDown={(e) => e.key === 'Enter' && setIsEditingIp(false)}
-                  autoFocus
-                  className="bg-transparent border-none outline-none text-xs w-32 text-emerald-400"
-                />
-              ) : (
-                <span 
-                  onClick={() => setIsEditingIp(true)}
-                  className="text-xs font-mono cursor-pointer hover:text-emerald-400 transition-colors"
-                >
-                  {piIp}:5000
-                </span>
-              )}
-            </div>
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${isScanning ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-900 border-white/5 text-zinc-500'}`}>
-              <div className={`w-2 h-2 rounded-full ${isScanning ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}`} />
-              <span className="text-[10px] font-bold uppercase tracking-wider">{isScanning ? 'Live' : 'Standby'}</span>
+              <span className="text-xs font-mono text-zinc-400">{piIp}</span>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* Left Column: Video & Controls */}
-        <div className="lg:col-span-8 space-y-6">
-          {/* Main Video Feed */}
-          <section className="relative aspect-video bg-zinc-900 rounded-2xl overflow-hidden border border-white/5 shadow-2xl group">
-            <img 
-              src={isScanning ? `http://${piIp}:5000/video` : "https://picsum.photos/seed/railway/1280/720?blur=10"} 
-              alt="Live Feed"
-              className={`w-full h-full object-cover transition-opacity duration-500 ${isScanning ? 'opacity-100' : 'opacity-40'}`}
-              referrerPolicy="no-referrer"
-            />
-            
-            {!isScanning && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
-                <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center backdrop-blur-sm border border-white/10">
-                  <Camera className="w-8 h-8 text-zinc-500" />
-                </div>
-                <p className="text-zinc-400 font-medium">Feed Paused. Start scan to view live stream.</p>
-              </div>
-            )}
-
-            {/* Overlay UI */}
-            <div className="absolute top-4 left-4 flex gap-2">
-              <div className="px-3 py-1 bg-black/60 backdrop-blur-md rounded-lg border border-white/10 flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-[10px] font-bold uppercase tracking-widest">REC</span>
-              </div>
-              <div className="px-3 py-1 bg-black/60 backdrop-blur-md rounded-lg border border-white/10 flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">FPS: 24</span>
-              </div>
+      <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
+        {/* Sidebar: Status & History */}
+        <aside className="lg:col-span-4 border-r border-white/5 bg-zinc-900/20 overflow-y-auto p-6 space-y-6">
+          {/* Live Status Card */}
+          <section className={`p-6 rounded-2xl border transition-all duration-500 ${
+            crackDetected ? 'bg-red-500/10 border-red-500/20' : 'bg-emerald-500/10 border-emerald-500/20'
+          }`}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-400">Live Status</h2>
+              <div className={`w-2 h-2 rounded-full ${isScanning ? 'animate-pulse bg-emerald-400' : 'bg-zinc-600'}`} />
             </div>
-
-            <AnimatePresence>
-              {crackDetected && (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className="absolute inset-0 border-4 border-red-500/50 pointer-events-none flex items-center justify-center"
-                >
-                  <div className="bg-red-600 text-white px-8 py-3 rounded-xl font-black text-2xl tracking-tighter shadow-2xl shadow-red-600/40 animate-bounce uppercase">
-                    Crack Detected!
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <div className="absolute bottom-4 right-4">
+            <div className={`text-2xl font-black tracking-tighter uppercase ${crackDetected ? 'text-red-500' : 'text-emerald-500'}`}>
+              {crackDetected ? 'CRACK DETECTED!' : 'Track Safe'}
+            </div>
+            <p className="text-[10px] text-zinc-500 mt-2 font-mono">
+              Last Scan: {new Date().toLocaleTimeString()} | {isMockMode ? 'Simulated' : 'Pi Feed'}
+            </p>
+            
+            <div className="mt-6 flex gap-3">
               <button 
                 onClick={toggleScan}
-                className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all active:scale-95 shadow-lg ${
-                  isScanning 
-                    ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/20' 
-                    : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-500/20'
+                className={`flex-1 py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all active:scale-95 flex items-center justify-center gap-2 ${
+                  isScanning ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'
                 }`}
               >
-                {isScanning ? (
-                  <><Square className="w-5 h-5 fill-current" /> Stop Scan</>
-                ) : (
-                  <><Play className="w-5 h-5 fill-current" /> Start Scan</>
-                )}
+                {isScanning ? <Square className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+                {isScanning ? 'Stop Scan' : 'Start Scan'}
+              </button>
+              <button 
+                onClick={handleNewDetection}
+                className="p-3 bg-zinc-800 rounded-xl border border-white/5 hover:bg-zinc-700 transition-colors"
+                title="Simulate New Detection"
+              >
+                <Plus className="w-5 h-5" />
               </button>
             </div>
           </section>
 
-          {/* Status & Stats Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-zinc-900/50 p-5 rounded-2xl border border-white/5 flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Crack Status</span>
-                <AlertTriangle className={`w-4 h-4 ${crackDetected || crackStatus === 'Connection Error' ? 'text-red-400' : 'text-zinc-600'}`} />
-              </div>
-              <div className={`text-xl font-bold ${crackDetected || crackStatus === 'Connection Error' ? 'text-red-400' : 'text-emerald-400'}`}>
-                {isScanning ? crackStatus : 'System Idle'}
-              </div>
-              {crackStatus === 'Connection Error' && isScanning && !isMockMode && (
-                <div className="mt-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-                  <p className="text-[10px] text-red-400 font-medium leading-relaxed">
-                    <strong>Connection Failed:</strong> Browsers block HTTPS sites from accessing local HTTP IPs (Mixed Content). 
-                    <br/><br/>
-                    1. Enable "Insecure content" in browser site settings.
-                    <br/>
-                    2. Ensure <code>flask-cors</code> is enabled on your Pi.
-                    <br/>
-                    3. Or toggle <strong>Mock Mode</strong> above to test UI.
-                  </p>
-                </div>
-              )}
+          {/* Stats Grid */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-zinc-900/50 p-4 rounded-xl border border-white/5">
+              <div className="text-[10px] font-bold text-zinc-500 uppercase mb-1">Total Cracks</div>
+              <div className="text-xl font-bold text-red-400">{stats.crackCount}</div>
             </div>
-
-            <div className="bg-zinc-900/50 p-5 rounded-2xl border border-white/5 flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Distance Traveled</span>
-                <Navigation className="w-4 h-4 text-zinc-600" />
-              </div>
-              <div className="text-xl font-bold text-white">
-                {stats.distance} <span className="text-sm font-normal text-zinc-500">meters</span>
-              </div>
-            </div>
-
-            <div className="bg-zinc-900/50 p-5 rounded-2xl border border-white/5 flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Scan Duration</span>
-                <Clock className="w-4 h-4 text-zinc-600" />
-              </div>
-              <div className="text-xl font-bold text-white">
-                {formatTime(stats.scanTime)}
-              </div>
+            <div className="bg-zinc-900/50 p-4 rounded-xl border border-white/5">
+              <div className="text-[10px] font-bold text-zinc-500 uppercase mb-1">Track Distance</div>
+              <div className="text-xl font-bold text-white">264 <span className="text-xs font-normal text-zinc-500">km</span></div>
             </div>
           </div>
 
-          {/* Logs Table */}
-          <section className="bg-zinc-900/50 rounded-2xl border border-white/5 overflow-hidden">
-            <div className="p-4 border-b border-white/5 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <History className="w-4 h-4 text-zinc-400" />
-                <h2 className="font-bold text-sm">Activity Log</h2>
-              </div>
-              <span className="text-[10px] text-zinc-500 font-mono">{logs.length} entries</span>
+          {/* Crack History Table */}
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500">Detection History</h3>
+              <button onClick={() => setLogs(INITIAL_CRACKS)} className="text-[10px] text-zinc-600 hover:text-zinc-400 underline">Reset</button>
             </div>
-            <div className="max-h-[300px] overflow-y-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="sticky top-0 bg-zinc-900 text-zinc-500 uppercase text-[10px] font-bold tracking-widest">
-                  <tr>
-                    <th className="px-4 py-3">Timestamp</th>
-                    <th className="px-4 py-3">Event</th>
-                    <th className="px-4 py-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {logs.length === 0 ? (
-                    <tr>
-                      <td colSpan={3} className="px-4 py-10 text-center text-zinc-600 italic">No activity recorded yet.</td>
-                    </tr>
-                  ) : (
-                    logs.map((log) => (
-                      <tr key={log.id} className="hover:bg-white/5 transition-colors">
-                        <td className="px-4 py-3 font-mono text-zinc-400">{log.timestamp}</td>
-                        <td className="px-4 py-3 font-medium">{log.status}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-tighter ${
-                            log.type === 'error' ? 'bg-red-500/10 text-red-400' :
-                            log.type === 'success' ? 'bg-emerald-500/10 text-emerald-400' :
-                            log.type === 'warning' ? 'bg-amber-500/10 text-amber-400' :
-                            'bg-zinc-800 text-zinc-400'
-                          }`}>
-                            {log.type}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+            <div className="space-y-3">
+              {logs.map(log => (
+                <div key={log.id} className="bg-zinc-900/50 p-4 rounded-xl border border-white/5 hover:border-white/10 transition-all group cursor-pointer" onClick={() => mapRef.current?.setView([log.lat, log.lng], 12)}>
+                  <div className="flex justify-between items-start mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${log.severity === 'High' ? 'bg-red-500' : log.severity === 'Medium' ? 'bg-amber-500' : 'bg-blue-500'}`} />
+                      <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-tighter">{log.severity} Severity</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-zinc-600">{log.timestamp}</span>
+                  </div>
+                  <div className="text-xs font-medium text-zinc-400 mb-1">
+                    {log.dist} km from Solapur Jn
+                  </div>
+                  <div className="text-[10px] font-mono text-zinc-500 flex justify-between">
+                    <span>{log.lat}, {log.lng}</span>
+                    <span className="text-emerald-500 group-hover:underline">View on Map</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
-        </div>
+        </aside>
 
-        {/* Right Column: GPS & Secondary Stats */}
-        <div className="lg:col-span-4 space-y-6">
-          {/* GPS Section */}
-          <section className="bg-zinc-900/50 p-6 rounded-2xl border border-white/5 space-y-4">
+        {/* Main Content: Map */}
+        <div className="lg:col-span-8 relative flex flex-col">
+          {/* Map Container */}
+          <div id="map-container" className="flex-1 z-0" />
+
+          {/* Track Progress Bar */}
+          <div className="absolute bottom-6 left-6 right-6 z-[500] bg-black/60 backdrop-blur-md p-4 rounded-2xl border border-white/10 shadow-2xl">
+            <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-2">
+              <span>Solapur Jn (0 km)</span>
+              <span className="text-emerald-400">Current Progress: {stats.distance} km</span>
+              <span>Pune Jn (264 km)</span>
+            </div>
+            <div className="h-2 bg-zinc-800 rounded-full overflow-hidden relative">
+              <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(90deg, transparent 95%, white 95%)', backgroundSize: '10% 100%' }} />
+              <motion.div 
+                className="h-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]"
+                animate={{ width: `${(stats.distance / 264) * 100}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Map Legend */}
+          <div className="absolute top-6 right-6 z-[500] bg-black/60 backdrop-blur-md p-3 rounded-xl border border-white/10 text-[10px] font-bold uppercase tracking-widest space-y-2">
             <div className="flex items-center gap-2">
-              <MapPin className="w-5 h-5 text-emerald-400" />
-              <h2 className="font-bold">GPS Location</h2>
+              <div className="w-3 h-0.5 bg-emerald-500" />
+              <span className="text-zinc-300">Railway Track</span>
             </div>
-            
-            <div className="aspect-square bg-zinc-800 rounded-xl border border-white/5 relative overflow-hidden group">
-              {/* Mock Map Grid */}
-              <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(#ffffff 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="relative">
-                  <div className="w-4 h-4 bg-emerald-500 rounded-full animate-ping absolute inset-0" />
-                  <div className="w-4 h-4 bg-emerald-500 rounded-full relative z-10 border-2 border-white" />
-                </div>
-              </div>
-              <div className="absolute bottom-3 left-3 right-3 bg-black/60 backdrop-blur-md p-3 rounded-lg border border-white/10">
-                <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
-                  <div>
-                    <span className="text-zinc-500 block">LATITUDE</span>
-                    <span className="text-white">{gps.lat}</span>
-                  </div>
-                  <div>
-                    <span className="text-zinc-500 block">LONGITUDE</span>
-                    <span className="text-white">{gps.lng}</span>
-                  </div>
-                </div>
-              </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-red-500" />
+              <span className="text-zinc-300">Crack Detected</span>
             </div>
-            
-            <p className="text-[10px] text-zinc-500 leading-relaxed">
-              Neo 6M GPS Module connected. Real-time coordinates are updated every 5 seconds during active scan.
-            </p>
-          </section>
-
-          {/* Bot Health */}
-          <section className="bg-zinc-900/50 p-6 rounded-2xl border border-white/5 space-y-6">
-            <h2 className="font-bold text-sm uppercase tracking-widest text-zinc-500">Bot Health</h2>
-            
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs">
-                  <span className="text-zinc-400">Battery Level</span>
-                  <span className="font-bold text-emerald-400">{stats.battery}%</span>
-                </div>
-                <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${stats.battery}%` }}
-                    className="h-full bg-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs">
-                  <span className="text-zinc-400">Current Speed</span>
-                  <span className="font-bold text-white">{stats.speed.toFixed(1)} m/s</span>
-                </div>
-                <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${(stats.speed / 2.5) * 100}%` }}
-                    className="h-full bg-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="pt-4 grid grid-cols-2 gap-4">
-                <div className="bg-zinc-800/50 p-3 rounded-xl border border-white/5">
-                  <div className="text-[10px] text-zinc-500 font-bold uppercase mb-1">Cracks Found</div>
-                  <div className="text-xl font-bold text-red-400">{stats.crackCount}</div>
-                </div>
-                <div className="bg-zinc-800/50 p-3 rounded-xl border border-white/5">
-                  <div className="text-[10px] text-zinc-500 font-bold uppercase mb-1">Signal</div>
-                  <div className="flex items-center gap-1">
-                    {[1, 2, 3, 4].map(i => (
-                      <div key={i} className={`w-1 h-3 rounded-full ${i <= 3 ? 'bg-emerald-500' : 'bg-zinc-700'}`} />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Quick Actions */}
-          <div className="grid grid-cols-2 gap-3">
-            <button className="p-4 bg-zinc-900/50 rounded-2xl border border-white/5 hover:bg-zinc-800 transition-colors flex flex-col items-center gap-2 group">
-              <Zap className="w-5 h-5 text-amber-400 group-hover:scale-110 transition-transform" />
-              <span className="text-[10px] font-bold uppercase">Flashlight</span>
-            </button>
-            <button className="p-4 bg-zinc-900/50 rounded-2xl border border-white/5 hover:bg-zinc-800 transition-colors flex flex-col items-center gap-2 group">
-              <CheckCircle2 className="w-5 h-5 text-blue-400 group-hover:scale-110 transition-transform" />
-              <span className="text-[10px] font-bold uppercase">Self Test</span>
-            </button>
           </div>
         </div>
       </main>
 
-      <footer className="max-w-7xl mx-auto p-6 text-center text-zinc-600 text-[10px] uppercase tracking-[0.2em]">
-        &copy; 2024 TrackGuard Systems &bull; Autonomous Railway Inspection
+      <footer className="bg-black border-t border-white/5 p-4 text-center text-[10px] uppercase tracking-[0.2em] text-zinc-600">
+        &copy; 2024 TrackGuard Systems &bull; Solapur-Pune Railway Division &bull; Autonomous Inspection Unit
       </footer>
+
+      <style>{`
+        .leaflet-container {
+          background: #0a0a0a !important;
+        }
+        .leaflet-tile {
+          filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+        }
+        .leaflet-popup-content-wrapper {
+          background: #18181b !important;
+          color: #f4f4f5 !important;
+          border-radius: 12px !important;
+          border: 1px solid rgba(255,255,255,0.1);
+        }
+        .leaflet-popup-tip {
+          background: #18181b !important;
+        }
+        .custom-div-icon {
+          background: transparent !important;
+          border: none !important;
+        }
+      `}</style>
 
       {/* Setup Modal */}
       <AnimatePresence>
         {showSetup && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -519,55 +504,32 @@ app = Flask(__name__)
 CORS(app)
 
 # --- CAMERA SETUP ---
-# USB cameras often use index 0, 1, or 2. We'll try to find it.
 camera = None
 for index in [0, 1, 2]:
     cap = cv2.VideoCapture(index)
     if cap.isOpened():
         camera = cap
-        print(f"Successfully connected to USB Camera at index {index}")
         break
     cap.release()
-
-if not camera:
-    print("ERROR: No USB camera found. Check connections.")
-    # exit() # Uncomment to stop script if no camera
-
-# Optimize for Raspberry Pi performance
-if camera:
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
 crack_status = "No Crack Detected"
 
 def detect_crack(frame):
     global crack_status
-    try:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blur, 50, 150)
-        crack_pixels = np.sum(edges == 255)
-
-        if crack_pixels > 4000:
-            crack_status = "CRACK DETECTED!"
-            cv2.putText(frame, "CRACK DETECTED!", (40, 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
-        else:
-            crack_status = "No Crack Detected"
-    except Exception as e:
-        print(f"Detection Error: {e}")
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 50, 150)
+    crack_pixels = np.sum(edges == 255)
+    if crack_pixels > 4000:
+        crack_status = "CRACK DETECTED!"
+    else:
+        crack_status = "No Crack Detected"
     return frame
 
 def generate_frames():
     while True:
-        if not camera:
-            time.sleep(1)
-            continue
         success, frame = camera.read()
-        if not success:
-            print("Failed to read frame")
-            break
-        
+        if not success: break
         frame = detect_crack(frame)
         ret, buffer = cv2.imencode('.jpg', frame)
         yield (b'--frame\\r\\n'
@@ -583,26 +545,14 @@ def video():
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
-    print("Starting server at http://0.0.0.0:5000")
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)`}
                   </pre>
-                </div>
-
-                <div className="space-y-3">
-                  <h3 className="text-sm font-bold text-amber-400 uppercase tracking-widest">3. Troubleshooting Checklist</h3>
-                  <ul className="text-[11px] text-zinc-400 space-y-2 list-disc pl-4">
-                    <li><strong>Camera Index:</strong> USB cameras on Pi can sometimes be at <code className="text-zinc-200">/dev/video1</code> or <code className="text-zinc-200">/dev/video2</code>. The script above tries to find it automatically.</li>
-                    <li><strong>Permissions:</strong> Try running the script with <code className="text-zinc-200">sudo python3 script.py</code> if you get permission errors.</li>
-                    <li><strong>Mixed Content:</strong> If the video doesn't show, you <strong>MUST</strong> enable "Insecure Content" in your browser settings (click the Lock icon next to the URL).</li>
-                    <li><strong>Network:</strong> Ensure your Pi IP (<code className="text-zinc-200">10.75.72.15</code>) is correct and your computer is on the same network.</li>
-                    <li><strong>Dependencies:</strong> Ensure you ran <code className="text-zinc-200">pip install flask-cors</code>. Without it, the dashboard cannot talk to the Pi.</li>
-                  </ul>
                 </div>
 
                 <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl">
                   <h4 className="text-xs font-bold text-amber-400 mb-1">Browser Security Note</h4>
                   <p className="text-[10px] text-amber-400/80 leading-relaxed">
-                    Because this dashboard runs on HTTPS, you must click the <strong>Lock icon</strong> in your browser address bar, go to <strong>Site Settings</strong>, and set <strong>Insecure Content</strong> to <strong>Allow</strong> to connect to your local Pi IP.
+                    Because this dashboard runs on HTTPS, you must click the <strong>Lock icon</strong> in your browser address bar, go to <strong>Site Settings</strong>, and set <strong>Insecure Content</strong> to <strong>Allow</strong>.
                   </p>
                 </div>
               </div>
